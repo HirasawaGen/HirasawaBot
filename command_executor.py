@@ -5,17 +5,24 @@ class CommandExecutor(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     
-    def __call__(self, command_str: str):
+    def __call__(self, command_str: str, *, context: dict | None = None):
+        if context == None:
+            context: dict = {}
         command_str = command_str.strip()
-        print(f"执行指令：{command_str}")
+        if command_str == "": return
+        
         command_name = command_str.split()[0]
-        if not command_name[0] == "/": return
+        if not command_name[0] == "/":
+            return [f'指令必须以"/"开头，请调用/help指令查看所有可用的指令']
         args_str = command_str[len(command_name) + 1:]
         command_name = command_name[1:]
         if not command_name in self:
-            raise KeyError(f"不存在指令：'/{command_name}'")
+            return [f'指令"/{command_name}"不存在，请调用/help指令查看所有可用的指令']
+        print(f"执行指令：{command_str}")
         args = self[command_name]['parser'](args_str)
-        return self[command_name]['generator'](*args)    
+        if not isinstance(args, list):
+            args = (args,)
+        return self[command_name]['generator'](context, *args)    
     
     def register(self, command_name: str | None = None, parser: Callable[[str], Any] | None = None):
         '''

@@ -8,6 +8,8 @@ dependencies = [
     "jmcomic>=2.6.9",
     "lxml>=6.0.2",
     "ncatbot>=4.2.4",
+    "openai>=2.3.0",
+    "opencv-python>=4.12.0.88",
     "pyyaml>=6.0.3",
     "pyzipper>=0.3.6",
 ]

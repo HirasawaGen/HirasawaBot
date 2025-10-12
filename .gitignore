@@ -8,6 +8,8 @@ wheels/
 
 napcat/
 logs/
+config.yaml
+hirasawa_config.yaml
 
 # Virtual environments
 .venv
