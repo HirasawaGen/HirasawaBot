@@ -17,15 +17,23 @@
     },
     "role_users": {
         "user": [
+            "1294702887",
             "123456"
         ],
         "admin": [],
         "root": [
-            "123456"
+            "1294702887"
         ]
     },
     "users": {
         "123456": {
+            "white_permissions_list": [],
+            "black_permissions_list": [],
+            "role_list": [
+                "user"
+            ]
+        },
+        "1294702887": {
             "white_permissions_list": [],
             "black_permissions_list": [],
             "role_list": [

@@ -11,6 +11,8 @@ class CommandExecutor(dict):
         command_str = command_str.strip()
         if command_str == "": return
         
+        return [f'已更改为新的指令架构，不需要@了，直接使用即可，例如/menu']
+        
         command_name = command_str.split()[0]
         if not command_name[0] == "/":
             return [f'指令必须以"/"开头，请调用/help指令查看所有可用的指令']

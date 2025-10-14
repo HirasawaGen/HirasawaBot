@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "jmcomic>=2.6.9",
+    "lupa>=2.5",
     "lxml>=6.0.2",
     "ncatbot>=4.2.4",
     "openai>=2.3.0",

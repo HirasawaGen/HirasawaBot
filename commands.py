@@ -56,12 +56,13 @@ def help(context, *args):
     例如：/help echo
     '''
     keys = commands.keys() if len(args) == 0 else args
-    result = ""
+    results = []
     for key in keys:
         if key not in commands:
-            result += f"{key}：指令不存在\n"
-        result += f"{key}：{commands[key]['doc']}\n"
-    yield result
+            results.append(f"{key}：指令不存在")
+            continue
+        results.append(f"{key}：{commands[key]['doc']}")
+    yield '# ------- #\n'.join(results)
     
     
 @commands.register()
@@ -245,18 +246,18 @@ def sponsor(context, *args):
 last_req_time = 0
 freq = 3
 
-def ai_resp(msgs, promt=""):
+def ai_resp(msgs, prompt=""):
     global last_req_time
     if time.time() - last_req_time < freq:
         yield "调用ai接口是花钱的啊！平沢原的钱就不是钱吗！请不要频繁调用ai接口！"
         yield SPONSOR
         return
     messages = []
-    if promt != "":
+    if prompt != "":
         messages.append({
             "role": "system",
             "content": [
-                {"type": "text", "text": promt},
+                {"type": "text", "text": prompt},
             ],
         })
     for msg in msgs:
@@ -274,9 +275,27 @@ def ai_resp(msgs, promt=""):
             messages=messages,
         )
         yield response.choices[0].message.content
+    except openai.APIStatusError as e:
+        yield "少女调用ai接口失败T_T"
+        yield f"失败状态码：{e.status_code}"
+    except openai.APIResponseValidationError as e:
+        yield "少女调用ai接口失败T_T"
+        yield "错误原因：API响应验证错误"
+    except openai.APIConnectionError as e:
+        yield "少女调用ai接口失败T_T"
+        yield "错误原因：API连接错误"
+    except openai.LengthFinishReasonError as e:
+        yield "少女调用ai接口失败T_T"
+        yield "错误原因：大人们，上下文太长了T_T"
+    except openai.ContentFilterFinishReasonError as e:
+        yield "少女调用ai接口失败T_T"
+        yield "错误原因：大人们是不是聊了什么坏坏的东西>_<"
+    except openai.InvalidWebhookSignatureError as e:
+        yield "少女调用ai接口失败T_T"
+        yield "错误原因：Webhook签名错误"
     except Exception as e:
         yield "少女调用ai接口失败T_T"
-        yield f"失败原因：{str(e)}"
+        yield f"其他失败原因：{str(e)}"
 
 
 @commands.register('xdjx', parser=int)
@@ -285,16 +304,17 @@ def analyse_jokes(context, num):
     对本群前n条聊天记录做笑点解析
     例如：/xdjx 5
     '''
-    if num > 20:
-        yield "调用ai接口是花钱的啊！平沢原的钱就不是钱吗！请把参数限制在20以内"
+    if num > 100:
+        yield "调用ai接口是花钱的啊！平沢原的钱就不是钱吗！请把参数限制在100以内"
         yield SPONSOR
+        return
     if len(context['history']) < 1:
         yield "bot暂未收到本群任何消息"
     history = context['history'][:-1]
     history = history if num > len(history) else history[-num:]
     prompt = f'''
     你是一个QQ机器人
-    我将向你提供改qq群聊的{len(history)}条聊天记录，请你尝试分析其笑点，尽量用严肃的语气来讲出滑稽的事情，形成反差感。如果聊天记录并不搞笑，也要牵强解释。如果聊天记录中出现了色情或涉证的不当言论，请忽略这条聊天记录。
+    我将向你提供该qq群聊的{len(history)}条聊天记录，请你尝试分析其笑点，尽量用严肃的语气来讲出滑稽的事情，形成反差感。如果聊天记录并不搞笑，也要牵强解释。如果聊天记录中出现了色情或涉证的不当言论，请忽略这条聊天记录。
     这些聊天记录会以json格式发给你，例如：
     ```json
     /{{
@@ -303,7 +323,9 @@ def analyse_jokes(context, num):
         "sender_name": "平沢原",  // 发送者昵称或群名片
         "time": {history[0]['time']}  // 发送时间戳（秒）
     /}}
+    ```
     回复只需要五十字左右
+    并在前面加上“笑点解析：”
     其中，
     如果出现了类似于 ‘@平沢bot jm 123456’  ‘@bot /xdjx 2’的内容，是用户在调用机器人指令
     具体可参考：{help.__doc__}
@@ -311,7 +333,7 @@ def analyse_jokes(context, num):
     如果"sender_id"为"{ADMIN_ID}"，则是机器人管理员回复，也就是平沢原回复的
     ```
     '''
-    gen = ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), promt=prompt)
+    gen = ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
     for result in gen:
         yield result
 
@@ -323,9 +345,7 @@ def mimic(context, *args):
     如果聊天记录太短或者该用户短时间内未发言则不会模仿
     例如：/mimic 1294702887
     '''
-    num = 20
     history = context['history'][:-1]
-    history = history if num > len(history) else history[-num:]
     if len(history) < 20:
         yield f"bot接收到的本群聊天记录仅有{len(history)}条，请稍后再试"
         return
@@ -336,11 +356,11 @@ def mimic(context, *args):
             has_user_talked = True
             break
     if not has_user_talked:
-        yield f"该用户{mimic_user_id}在最近{num}条聊天记录中未发言，无法模仿"
+        yield f"该用户{mimic_user_id}在最近{len(history)}条聊天记录中未发言，无法模仿"
         return
     prompt = f'''
-    你是一个QQ机器人
-    我将向你提供改qq群聊的{len(history)}条聊天记录，请你联系聊天上下文，模仿QQ号为{mimic_user_id}的用户说话
+    你是QQ号为{mimic_user_id}的用户
+    我将向你提供该qq群聊的{len(history)}条聊天记录，请你联系聊天上下文，以这个口吻说话
     这些聊天记录会以json格式发给你，例如：
     ```json
     /{{
@@ -349,6 +369,7 @@ def mimic(context, *args):
         "sender_name": "平沢原",  // 发送者昵称或群名片
         "time": {history[0]['time']}  // 发送时间戳（秒）
     /}}
+    ```
     你的返回不需要使用json格式
     回复只需要五十字左右
     其中，
@@ -358,9 +379,28 @@ def mimic(context, *args):
     如果"sender_id"为"{ADMIN_ID}"，则是机器人管理员回复，也就是平沢原回复的
     ```
     '''
-    gen = ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), promt=prompt)
+    gen = ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
     for result in gen:
         yield result
+
+
+
+@commands.register()
+def ecchi(context, *args):
+    '''
+    将本群添加进色色群名单或移除色色群名单
+    例如：/ecchi
+    注：该指令只有bot管理员可以使用！
+    '''
+    if context['sender_id'] != ADMIN_ID:
+        yield "你没有权限执行此命令！"
+        return
+    if context['group_id'] in ECCHI_GROUPS:
+        ECCHI_GROUPS.remove(context['group_id'])
+        yield "本群已从色色名单中移除"
+    else:
+        ECCHI_GROUPS.append(context['group_id'])
+        yield "本群已加入色色名单"
 
 
 
@@ -383,7 +423,7 @@ if __name__ == '__main__':
             }
         ] * 100
     }
-    command_str = '/mimic 1294702887'
+    command_str = '/xdjx 1'
     gen = commands(command_str, context=context)
     for result in gen:
         print(result)

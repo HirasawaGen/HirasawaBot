@@ -30,7 +30,7 @@ histories: dict[str, Any] = {
 
 @bot.on_shutdown()
 async def on_shutdown(*args):
-    await bot.api.post_private_msg(user_id=ADMIN_ID, text='机器人已启动！')
+    await bot.api.post_private_msg(user_id=ADMIN_ID, text='机器人已关闭！')
     
 
 @bot.on_startup()
@@ -76,17 +76,16 @@ async def on_group_message(msg: GroupMessage):
     sender_id = sender.user_id
     group_id = msg.group_id
     msg_list: list[dict] = msg.message.to_list()
-    history_path = Path() / 'histories' / f'{group_id}.yaml'
-    history = histories.get(str(group_id), [] if not history_path.exists() else safe_load(history_path.open('r', encoding='utf-8')))
-    history.append({
-        "message": msg.raw_message,
-        "sender_id": sender_id,
-        "sender_name": sender.card if sender.card != '' else sender.nickname,
-        "time": msg.time,
-    })
-    if len(history) > MAX_HISTORY:
-        history = history[-MAX_HISTORY:]
-    histories[group_id] = history
+    
+    messages_history = await bot.api.get_group_msg_history(group_id=group_id, message_seq=0, count=MAX_HISTORY)
+    history = []
+    for message in messages_history:
+        history.append({
+            "message": message.raw_message,
+            "sender_id": message.sender.user_id,
+            "sender_name": message.sender.card if message.sender.card != '' else message.sender.nickname,
+            "time": message.time,
+        })
     
     context = {
         'group_id': group_id,
@@ -94,27 +93,12 @@ async def on_group_message(msg: GroupMessage):
         'history': history,
     }
     
-    count = 0
-    has_admin_speak = False
-    for history_elem in history[::-1]:
-        if history_elem['sender_id'] != BOT_ID:
-            count += 1
-        if history_elem['sender_id'] == ADMIN_ID:
-            has_admin_speak = True
-        if count > 0 and has_admin_speak:
-            break
-        
-    if random.random() < 1 - (0.99) ** (count + 1):
-        if has_admin_speak:
-            gen = commands(f'/mimic {ADMIN_ID}', context=context)
-        else:
-            gen = commands(f'/mimic {sender_id}', context=context)
-        next(gen)
-        for elem in gen:
-            bot.api.post_group_msg(group_id=group_id, message=str(parse_elem(elem, context=context)))
-            
-    
-    safe_dump(history, history_path.open('w', encoding='utf-8'))
+    shut_list = await bot.api.get_group_shut_list(group_id=group_id)
+    members = shut_list.members
+    for member in members:
+        if str(member.user_id) == BOT_ID:
+            logger.info(f"bot is shut in group '{group_id}'")
+            return
     if len(msg_list) != 2: return
     if msg_list[0]['type'] != 'at' or msg_list[0]['data']['qq'] != BOT_ID:
         return
