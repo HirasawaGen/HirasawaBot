@@ -5,12 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "jinja2>=3.1.6",
     "jmcomic>=2.6.9",
-    "lupa>=2.5",
     "lxml>=6.0.2",
+    "mypy>=1.18.2",
     "ncatbot>=4.2.4",
     "openai>=2.3.0",
     "opencv-python>=4.12.0.88",
+    "pypinyin>=0.55.0",
     "pyyaml>=6.0.3",
     "pyzipper>=0.3.6",
 ]
@@ -22,3 +24,8 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 [[tool.uv.index]]
 name = "jmcomic"
 url = "https://pypi.org/project"
+
+[tool.mypy]
+ignore_missing_imports = true
+enable_incomplete_feature = ["NewGenericSyntax"] # PEP 695
+

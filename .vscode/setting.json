@@ -1,0 +1,18 @@
+{
+  "python.linting.enabled": true,
+  "python.linting.mypyEnabled": true,
+  
+  "python.linting.mypyPath": "${workspaceFolder}/.venv/Lib/site-packages/mypy",
+  
+  "python.linting.mypyArgs": [
+    "--strict",
+    "--config-file", "${workspaceFolder}/pyproject.toml",
+    "--show-error-codes",
+    "--no-error-summary"
+  ],
+  
+  "python.linting.lintOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": true
+  }
+}

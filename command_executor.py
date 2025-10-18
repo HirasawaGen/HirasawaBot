@@ -7,7 +7,7 @@ class CommandExecutor(dict):
     
     def __call__(self, command_str: str, *, context: dict | None = None):
         if context == None:
-            context: dict = {}
+            context = {}
         command_str = command_str.strip()
         if command_str == "": return
         

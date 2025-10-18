@@ -31,6 +31,8 @@ def obfuscation(img: MatLike) -> MatLike:
 
 
 if __name__ == '__main__':
-    img = cv2.imread('test.webp')
+    img = cv2.imread('test.png')
+    if img is None:
+        exit()
     new_img = obfuscation(img)
-    cv2.imwrite('new_test.webp', new_img)
+    cv2.imwrite('new_test.png', new_img)

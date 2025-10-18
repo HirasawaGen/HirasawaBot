@@ -39,7 +39,7 @@ def load_eid(item_type: str, isaac_root: Path, lang: str = 'zh_cn') -> dict[int,
     以方便我用python解析
     '''
     luapy_path = isaac_root / 'eid' / lang / f'{item_type}.luapy'
-    ans = {}
+    ans: dict[int, dict] = {}
     with open(luapy_path, 'r', encoding='utf-8') as f:
         content = f.read()
     for line in content.split('\n'):
@@ -83,19 +83,22 @@ def load_eid(item_type: str, isaac_root: Path, lang: str = 'zh_cn') -> dict[int,
     return ans
 
 
-def eid_description(item_type: str, isaac_root: Path, info: dict[str, str]) -> list[str | Path]:    
+def eid_description(item_type: str, isaac_root: Path, info: dict[str, str], no_desc: bool = False) -> list[str | Path]:    
     item_type = item_type.lower()
     name = info['name']
     desc = info['desc']
+    item_id = info['id']
+    type_in_path = item_type if item_type == 'collectibles' else item_type[:-1]
+    image_file = isaac_root / 'items' / item_type / f'{type_in_path}_{info["id"]:0>3}_{info["raw_name"]}.png'
+    if no_desc:
+        return [image_file, f'道具名称：{name}\n道具id：{item_id}']
     desc = desc.replace('#', '\n')
     desc = desc.replace('↓', '{{ArrowDown}}')
     desc = desc.replace('↑', '{{ArrowUp}}')
-    type_in_path = item_type if item_type == 'collectibles' else item_type[:-1]
-    image_file = isaac_root / 'items' / item_type / f'{type_in_path}_{info["id"]:0>3}_{info["raw_name"]}.png'
-    arr = [image_file]
+    arr: list[str | Path] = [image_file]
     for seg in re.split(
         r'(\{\{.*?\}\})', 
-        f'道具名称：{name}\n\n{desc}'
+        f'道具名称：{name}\n道具id：{item_id}\n\n{desc}'
     ):
         if not seg.startswith('{{'):
             arr.append(seg)
