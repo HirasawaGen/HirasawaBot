@@ -1,15 +1,15 @@
 from functools import wraps
-from itertools import chain
-from itertools import batched
+from itertools import chain, batched, takewhile
 from pathlib import Path
 
 from pypinyin import pinyin, Style
+import yaml  # type: ignore
 import openai
 import time
 import json
 import random
-from typing import Iterator, Final
-
+import asyncio
+from typing import Iterator
 
 
 from ncatbot.plugin_system import (
@@ -20,12 +20,16 @@ from ncatbot.plugin_system import (
     root_filter,
     command_registry,
     group_filter,
+    on_notice,
+    on_request,
 )
 
 from ncatbot.core import (
     GroupMessage,
     BaseMessageEvent,
     RequestEvent,
+    NoticeEvent,
+    Reply
 )
 
 from ncatbot.utils import get_log, run_coroutine
@@ -33,6 +37,8 @@ from ncatbot.plugin_system.builtin_plugin.unified_registry.command_system.utils.
 
 from .bot_utils import *
 from .isaac_utis import *
+from .ai_utils import HirasawaAI
+from .falsifysignature import flatten_args, flatten_kwargs
 
 
 __author__ = 'HirasawaGen'
@@ -67,20 +73,29 @@ class HirasawaBot(NcatBotPlugin):
         self.TEST_GROUP = config['test_group']
         self.promts = load_prompts(self.workspace / config['prompts_root'])
         ai_config = config['ai']
-        self._ai_client = openai.OpenAI(
-            base_url=ai_config['base_url'],
-            api_key=ai_config['api_key'],
+        provider = ai_config['providers'][ai_config['provider']]
+        self._ai_client = HirasawaAI(
+            base_url=provider['base_url'],
+            api_key=provider['api_key'],
+            model=provider['model'],
+            frequency=ai_config['freq'],
         )
-        self._ai_model = ai_config['model']
-        self.AI_FREQ = ai_config['freq']
-        self._ai_last_req_time = 0
         self.pop_texts = [
             "我是平沢bot，Ciallo～(∠・ω< )⌒☆~",
             "极品人机冒泡儿~",
             "潜水党偷看中……",
         ]
+        self.add_scheduled_task(
+            self.daily_congraduate_talkative,
+            'daily_task',
+            '21:00',
+        )
+        return await super().on_load()
         # await self.api.post_private_msg(user_id=self.ADMIN_ID, text='平沢bot已启动！')
-        
+    
+    # async def on_close(self):
+    #     yaml.safe_dump(self.config, self.data_file.open('w', encoding='utf-8'))
+    #     return await super().on_close()
 
     async def __pre_command__(self, event: BaseMessageEvent, spec: CommandSpec, *args, **kwargs) -> bool:
         logger.info(f"Executing command '{spec.name}' with args '{args}' and kwargs '{kwargs}'")
@@ -108,6 +123,73 @@ class HirasawaBot(NcatBotPlugin):
         self.api.send_private_text_sync(user_id=event.user_id, text='你好，我是平沢bot，Ciallo～(∠・ω< )⌒☆')
         self.log2admin(f"同意了好友请求：{event.user_id}")
 
+    @on_notice
+    async def on_notice(self, event: NoticeEvent):
+        return
+        if event.sub_type != 'poke': return
+        group_id = str(event.group_id)
+        user_id = str(event.user_id)
+        target_id = str(event.target_id)
+        if group_id == None or user_id == None: return
+        if target_id not in self.config['pokes'].keys(): return
+        logger.info(f'User {user_id} poked {target_id} in group {group_id}')
+        self.api.post_group_array_msg_sync(
+            group_id,
+            self@user_id+self.config['pokes'][target_id],
+        )
+    
+    
+    
+    @hirasawa  # type: ignore
+    async def congradulate_talkative(self, event: MessageEventDuck):
+        return self@event.user_id + '恭喜你！你是今天的龙王🐉👑！继续保持多水群哦！(´∀`)~♡'
+   
+    
+    async def daily_congraduate_talkative(self):
+        groups = await self.api.get_group_list(False)
+        for group_id in groups:
+            try:
+                group_honor_info = await self.api.get_group_honor_info(group_id, 'all')
+            except Exception as e:
+                logger.error(type(e).__name__ + ': '+ str(e))
+                continue
+            talkative = group_honor_info.current_talkative
+            await self.congradulate_talkative(
+                MessageEventDuck('group', group_id, talkative.user_id)
+            )
+    
+    
+    @root_filter
+    @group_filter
+    @command_registry.command('talkative')
+    @hirasawa
+    async def test_talkative(self, event: GroupMessage):
+        '''
+        @出今天本群的龙王，并恭喜他。
+        注：该指令只有bot主人可以使用
+        '''
+        await self.congradulate_talkative(event)
+            
+
+    def repeat(self, event: GroupMessage):
+        if event.sender.user_id == event.self_id: return
+        history = self.analyse_history(event.group_id)
+        if len(history) < 3: return
+        if history[-1]['message'] != history[-2]['message']: return
+        if history[-2]['message'] != history[-3]['message']: return
+        yield event.raw_message
+        yield False
+
+
+    def formation(self, event: GroupMessage):
+        if event.sender.user_id == event.self_id: return
+        history = self.analyse_history(event.group_id)
+        if len(history) < 4: return
+        if not (history[-2]['message'] == history[-3]['message'] == history[-4]['message']): return
+        if history[-1]['message'] != history[-2]['message']:
+            yield Reply(event.message_id), '你这个人怎么随便打乱队形啊！'
+            yield False
+    
     def heyiwei(self, event: GroupMessage):
         if event.sender.user_id == event.self_id: return
         raw_text = event.raw_message.strip()
@@ -135,18 +217,19 @@ class HirasawaBot(NcatBotPlugin):
         history = self.analyse_history(group_id)
         if len(history) <= pop_freq:
             return
-        has_root_talked = False
+        current_time = time.time()
+        mimic_root = False
         for msg in history[-1:-1-pop_freq:-1]:
-            if msg['sender_id'] == event.self_id:
-                return
             if msg['sender_id'] == self.ADMIN_ID:
-                has_root_talked = True
-        if not has_root_talked:
+                mimic_root = True
+            if msg['sender_id'] == event.self_id and current_time - msg['time'] < 10800:
+                return
+        if not mimic_root:
             pop_text = random.choice(self.pop_texts)
             yield pop_text
             yield False
             return
-        self.log2admin(f'正在尝试在群{group_id}中鹦鹉学舌')
+        # self.log2admin(f'正在尝试在群{group_id}中鹦鹉学舌')
         prompt = self.promts['group_pop'].render(
             history=history,
             ADMIN_ID=self.ADMIN_ID,
@@ -154,66 +237,54 @@ class HirasawaBot(NcatBotPlugin):
         )
         gen = self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
         texts = [text for text in gen]
-        if len(texts) != 2:
-            self.log2admin('\n'.join(texts[1:]))
+        if len(texts) != 1:
+            self.log2admin('\n'.join(texts))
             return
-        yield texts[1]
+        yield texts[0]
         yield False
 
     @group_filter
-    @hirasawa_deco
-    def on_group_message(self, event: GroupMessage, help: bool=False) -> Iterator[ItemType]:
-        for item in chain(
+    @hirasawa
+    async def on_group_message(self, event: GroupMessage) -> AsyncIterator[ItemType]:
+        for item in takewhile(lambda x: x != False, chain(
+            self.repeat(event),
+            self.formation(event),
             self.heyiwei(event),
             self.caicaibei(event),
             self.group_pop(event),
-        ):
-            if item == False:
-                break
-            if item == True:
-                continue
+        )):
             yield item
-        
 
     def log2admin(self, msg: str):
         self.api.post_private_msg_sync(user_id=self.ADMIN_ID, text=msg)
-        
-    def ai_resp(self, msgs, prompt=""):
-        if time.time() - self._ai_last_req_time < self.AI_FREQ:
-            yield "调用ai接口是花钱的啊！平沢原的钱就不是钱吗！请不要频繁调用ai接口！"
-            yield "尝试调用'/sponsor'命令，或许可以缓解…"
-            return
-        messages = []
-        if prompt != "":
-            messages.append({
-                "role": "system",
-                "content": [
-                    {"type": "text", "text": prompt},
-                ],
-            })
-        for msg in msgs:
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": msg},
-                ],
-            })
-        yield "少女调用ai接口中…"
+    
+    def ai_resp(self, messages: Iterator[str], prompt: str = ""):
         try:
-            response = self._ai_client.chat.completions.create(
-                # 指定您创建的方舟推理接入点 ID，此处已帮您修改为您的推理接入点 ID
-                model=self._ai_model,
-                messages=messages,
-            )
-            self._ai_last_req_time = time.time()
-            yield response.choices[0].message.content
+            resp = self._ai_client << {
+                "messages": messages,
+                "prompt": prompt,
+            }
+            yield resp
+        except AssertionError as e:
+            if str(e).startswith("Too frequent requests"):
+                yield "调用ai接口是花钱的啊！平沢原的钱就不是钱吗！请不要频繁调用ai接口！"
+                yield "尝试调用'/sponsor'命令，或许可以缓解…"
+            elif str(e).startswith("Invalid response type"):
+                yield "少女调用ai接口失败T_T"
+                yield f"错误原因：API响应类型错误{str(e)}"
+            elif str(e).startswith("Empty response"):
+                yield "少女调用ai接口失败T_T"
+                yield f"错误原因：后台响应了空字符串"
+            else:
+                yield "少女调用ai接口失败T_T"
+                yield f"其他失败原因：其他断言错误{str(e)}"
         except openai.APIStatusError as e:
             yield "少女调用ai接口失败T_T"
-            if e.status_code == 403:
-                yield "平沢原的火山引擎账号没钱了喵T_T"
+            if e.status_code == 429:
+                yield "平沢原的api账号没钱了喵T_T"
                 yield "或许可以调用/sponsor命令缓解财政危机？！！"
                 return
-            yield f"失败状态码：{e.status_code}"
+            yield f"失败状态码：'{e.status_code}: {e.message}'"
         except openai.APIResponseValidationError as e:
             yield "少女调用ai接口失败T_T"
             yield "错误原因：API响应验证错误"
@@ -245,8 +316,10 @@ class HirasawaBot(NcatBotPlugin):
             })
         return history
     
-    @hirasawa_command(aliases=['菜单', 'help', '帮助'])
-    def menu(self, event: GroupMessage, help: bool = False):
+    @group_filter
+    @command_registry.command('menu', aliases=['菜单', 'help', '帮助'])
+    @hirasawa
+    async def menu(self, event: GroupMessage):
         '''
         输出指令与使用方式
         为防止过长消息刷频，该指令只会随机输出三条指令的使用方式
@@ -273,9 +346,10 @@ class HirasawaBot(NcatBotPlugin):
             
         yield '\n\n# -------------------------- #\n'.join(ans)
      
-    
-    @hirasawa_command()
-    def sponsor(self, event: GroupMessage, help: bool = False):
+    @group_filter
+    @command_registry.command('sponsor', aliases=['赞助'])
+    @hirasawa
+    async def sponsor(self, event: GroupMessage):
         '''
         输出bot作者性感照片
         例如：/sponsor
@@ -283,12 +357,11 @@ class HirasawaBot(NcatBotPlugin):
         # 其实这里输出的是本人微信收款码，戏耍一下大家
         yield self.SPONSOR
         yield "好人赏俺吃口饭吧！"
-    
-    
         
-    
-    @hirasawa_command('xdjx', aliases=['笑点解析'])
-    def analyse_jokes(self, event: GroupMessage, num: int, help: bool = False):
+    @group_filter
+    @command_registry.command('xdjx', aliases=['笑点解析'])
+    @hirasawa
+    async def analyse_jokes(self, event: GroupMessage, num: int):
         '''
         对本群前n条聊天记录做笑点解析
         例如：/xdjx 5
@@ -307,12 +380,14 @@ class HirasawaBot(NcatBotPlugin):
             ADMIN_ID=self.ADMIN_ID,
             BOT_ID=self.BOT_ID,
         )
-        gen = self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
-        for result in gen:
-            yield result
-    
-    @hirasawa_command('mimic', aliases=['鹦鹉学舌'])
-    def mimic(self, event: GroupMessage, mimic_user_id: str, help: bool = False):
+        yield "少女解析笑点中…"
+        for msg in self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt):
+            yield msg
+        
+    @group_filter
+    @command_registry.command('mimic', aliases=['鹦鹉学舌'])
+    @hirasawa
+    async def mimic(self, event: GroupMessage, mimic_user_id: str):
         '''
         根据本群聊天记录模仿某个用户说话
         如果聊天记录太短或者该用户短时间内未发言则不会模仿
@@ -345,13 +420,15 @@ class HirasawaBot(NcatBotPlugin):
             ADMIN_ID=self.ADMIN_ID,
             BOT_ID=self.BOT_ID,
         )
-        gen = self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
-        for result in gen:
-            yield result
+        yield "少女模仿杂鱼中…"
+        # yield from self.ai_resp_old(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
+        for msg in self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt):
+            yield msg
 
-
-    @hirasawa_command('critic', aliases=['评价'])
-    def critic(self, event: GroupMessage, critic_user_id: str = '', help: bool = False):
+    @group_filter
+    @command_registry.command('critic', aliases=['评价'])
+    @hirasawa
+    async def critic(self, event: GroupMessage, critic_user_id: str = ''):
         '''
         玩玩俄罗斯轮盘赌
         1/6概率嘲讽挖苦
@@ -402,17 +479,15 @@ class HirasawaBot(NcatBotPlugin):
             ADMIN_ID=self.ADMIN_ID,
             BOT_ID=self.BOT_ID,
         )
-        gen = self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt)
-        for result in gen:
-            yield result
-    
-    
+        yield "少女评价杂鱼中…"
+        for msg in self.ai_resp(map(lambda x: json.dumps(x, ensure_ascii=False), history), prompt=prompt):
+            yield msg
+        
     @group_filter
     @command_registry.command('isaac', aliases=['以撒的结合', '以撒'])
-    @hirasawa_option.help('显示帮助信息')
-    @hirasawa_option.no_desc('不输出道具/饰品的描述')
-    @hirasawa_deco
-    def isaac(self, event: GroupMessage, arg: str, help: bool = False, no_desc: bool = False):
+    # @hirasawa_option.no_desc('不输出道具/饰品的描述')
+    @hirasawa
+    async def isaac(self, event: GroupMessage, arg: str, **options):
         '''
         输入《以撒的结合：忏悔》中的道具编号或饰品编号，或者直接输入名称，输出对应的图片以及EID描述。
         加入-n参数将不输出道具/饰品的描述
@@ -422,6 +497,7 @@ class HirasawaBot(NcatBotPlugin):
           - /isaac 妈妈的菜刀
           - /isaac -n 妈妈的菜刀
         '''
+        no_desc = options.get('no_desc', False)
         if arg[0].upper() == 'C':
             item_id = arg[1:]
             if not item_id.isdigit():
@@ -459,12 +535,10 @@ class HirasawaBot(NcatBotPlugin):
             if not found:
                 yield "未找到该道具/饰品！"
     
-    
     @group_filter
     @command_registry.command('kick')
-    @option(short_name='h', long_name='help', help='显示帮助信息')
-    @hirasawa_deco
-    def kick(self, event: GroupMessage, help: bool=False):
+    @hirasawa
+    async def kick(self, event: GroupMessage):
         '''
         使用该指令使bot退出本群
         使用第三方bot框架,如果机器人被踢的话可能引起风控
@@ -482,13 +556,11 @@ class HirasawaBot(NcatBotPlugin):
             return
         yield "只有群管理员与bot主人可以使用该命令！"
         
-    
     @root_filter
     @group_filter
     @command_registry.command('temp')
-    @hirasawa_option.help('显示帮助信息')
-    @hirasawa_deco
-    def temp(self, event: GroupMessage, qq_id:str, text: str, help: bool=False):
+    @hirasawa
+    async def temp(self, event: GroupMessage, qq_id:str, text: str):
         '''
         给本群某个群友发送临时会话
         只有bot管理员可以使用
@@ -497,11 +569,20 @@ class HirasawaBot(NcatBotPlugin):
         yield "已发送临时会话！"
         return
     
+    @root_filter
+    @group_filter
+    @command_registry.command('sleep')
+    @hirasawa
+    async def sleep(self, event: GroupMessage, seconds: int):
+        logger.info(f'sleep command received')
+        yield 'sleeping'
+        await asyncio.sleep(seconds)
+        yield 'wake up'
+    
     @group_filter
     @command_registry.command('close', aliases=['shutdown', '关机'])
-    @hirasawa_option.help('显示帮助信息')
-    @hirasawa_deco
-    def close(self, event: GroupMessage, help: bool=False):
+    @hirasawa
+    async def close(self, event: GroupMessage):
         '''
         关闭bot，使其不再响应任何消息
         只有bot管理员可以使用
@@ -512,12 +593,37 @@ class HirasawaBot(NcatBotPlugin):
 
     @group_filter
     @command_registry.command('who_spy', aliases=['谁是卧底'])
-    def who_spy(self, event: GroupMessage):
+    @hirasawa
+    async def who_spy(self, event: GroupMessage):
         '''
-        
+        暂未实现
         '''
         ...
+        
+    @root_filter
+    @command_registry.command('echo')
+    @hirasawa
+    async def echo(self, event: GroupMessage, *args: str):
+        '''
+        foo
+        '''
+        yield '\n'.join(args)
     
+    @group_filter
+    @command_registry.command('pokes', aliases=['戳一戳'])
+    @hirasawa
+    async def pokes(self, event: GroupMessage, *texts: str):
+        '''
+        定制化你的戳一戳回复
+        例如：
+          - /pokes 别戳他了！
+        当你在群里被某人戳时，bot就会回复：
+          - @某人 别戳他了！
+        注：设置跨群有效
+        '''
+        text = ' '.join(texts)
+        self.config['pokes'][event.sender.user_id] = text
+        yield f'已设置您的定制化戳一戳为：\n{text}'
         
         
         

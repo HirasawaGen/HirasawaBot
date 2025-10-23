@@ -2,18 +2,6 @@ from pathlib import Path
 import re
 
 
-from ncatbot.core import (
-    PrivateMessage,
-    GroupMessage,
-    BaseMessageEvent,
-    MessageSegment,
-    MessageArray,
-    Image,
-    Text,
-    At,
-)
-
-
 def get_icon(name: str, isaac_root: Path) -> Path | None:
     icon = isaac_root / 'icon' / f'{name}.png'
     if name.startswith('Collectible') and len(name) > len('Collectible'):
